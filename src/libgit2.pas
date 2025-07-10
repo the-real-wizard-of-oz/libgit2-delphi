@@ -55,6 +55,7 @@ procedure ShutdownLibgit2;
    *
    * https://github.com/libgit2/libgit2/blob/main/COPYING
     *)
+
 {$I git2/version.inc}
 {$I git2/common.inc}
 {$I git2/types.inc}
