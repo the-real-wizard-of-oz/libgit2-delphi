@@ -1,4 +1,4 @@
-program libgit2_demo;
+﻿program libgit2_demo;
 
 {$APPTYPE CONSOLE}
 
@@ -8,40 +8,80 @@ uses
   FastMM4,
   libgit2,
   System.SysUtils,
+  System.IOUtils,
   libgit2_wrapper in '..\src\libgit2_wrapper.pas';
 
-function LibGit2Test: Boolean;
-var
-  statusRepository : integer;
-  repoPP : Pgit_repository;
-  gitError : Pgit_error;
-const
-  repoPath : PAnsiChar = 'C:/src/4prax.git/backend/Tests';
-begin
-  Result := False;
-  try
-    InitLibgit2;  //with this setup in "LibGit2.pas" you can only init a single repository at a time... (Singleton Pattern)
-    statusRepository := git_repository_init(@repoPP, repoPath, 0); //function git_repository_init(out_: PPgit_repository; path: PAnsiChar; is_bare: Cardinal): Integer; cdecl; external libgit2_dll;
-    if statusRepository <> 0 then begin
-      gitError := git_error_last(); //message: invalid argument: "out"
-    end;
-    //How to look into the repo?
-      //ToDo
-    ShutdownLibgit2;
-  except
-    on E: Exception do
-      Writeln(E.ClassName, ': ', E.Message);
+type
+  TLibTest = class
+  public
+    procedure Run(const aRepo, aUser, aPassword, aFolder: String);
+    procedure DoLog(Sender: TObject; const aText: string);
   end;
-  //keep console open
-  readln;
+
+{ TLibTest }
+
+procedure TLibTest.DoLog(Sender: TObject; const aText: string);
+begin
+  Writeln(aText);
+end;
+
+procedure TLibTest.Run(const aRepo, aUser, aPassword, aFolder: String);
+var
+  Git: TLibGit2;
+begin
+  Git := TLibGit2.Create;
+  try
+    if not Git.Init(aFolder) then
+    begin
+      Writeln('Git.Init() error: ', Git.LastErrorText);
+      Exit;
+    end;
+
+    if Git.IsGitRepo(aFolder) then
+      Writeln(aFolder ,' is a valid git repository')
+    else
+      Writeln(aFolder ,' is NOT a valid git repository');
+
+    if TDirectory.Exists(aFolder) then
+    begin
+      Writeln('WARNING ! ', sLineBreak, aFolder, ' is going to be deleted.', sLineBreak,
+        'Press <CTRL>+<C> to terminate, or <ENTER> to continue.');
+      Readln;
+      TDirectory.Delete(aFolder, True);
+    end;
+
+    Git.OnLog := DoLog;
+    Git.Props.Username := aUser;
+    Git.Props.Password := aPassword;
+    Git.Props.Options := [lgoIgnoreCertificateErrors, lgoVerboseGitProgress];
+
+    if not Git.Clone(aRepo, aFolder) then
+    begin
+      Writeln('Git.Clone() error: ', Git.LastErrorText);
+      Exit();
+    end;
+
+    if Git.ExistsRemoteBranch(aFolder, 'origin', 'some-test-branch') then
+      Writeln('Branch exists.')
+    else
+      Writeln('Branch does not exist.');
+  finally
+    Git.Free;
+  end;
 end;
 
 begin
   ReportMemoryLeaksOnShutdown := True;
+  if ParamCount <> 4 then
+  begin
+    Writeln('usage: libgit2_demo [repo-url] [username] [password/token] [root-test-folder]');
+    Halt(1);
+  end;
+
+  with TLibTest.Create do
   try
-    Libgit2Test;
-  except
-    on E: Exception do
-      Writeln(E.ClassName, ': ', E.Message);
+    Run(ParamStr(1), ParamStr(2), ParamStr(3), ParamStr(4));
+  finally
+    Free;
   end;
 end.
