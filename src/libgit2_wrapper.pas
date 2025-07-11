@@ -37,7 +37,6 @@ type
     procedure SetLastErrorFromGit;
 
     procedure DoLog(const aText: String; const aArgs: array of const); overload;
-    procedure DoLog(const aText: String); overload;
 
     function HttpsCredentialCallback(
       out cred: Pgit_credential;
@@ -126,11 +125,6 @@ begin
   ShutdownLibgit2;
   FProps.Free;
   inherited;
-end;
-
-procedure TLibGit2.DoLog(const aText: String);
-begin
-  DoLog(aText, []);
 end;
 
 type
