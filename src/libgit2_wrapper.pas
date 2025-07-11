@@ -35,18 +35,9 @@ type
     FProps: TLibGit2Properties;
     FOnLog: TLibGit2LogEvent;
     procedure SetLastErrorFromGit;
+
     procedure DoLog(const aText: String; const aArgs: array of const); overload;
     procedure DoLog(const aText: String); overload;
-  public
-    constructor Create;
-
-    destructor Destroy; override;
-
-    function Init(const aRepoPath: TFileName): Boolean;
-
-    function Clone(const aUrl: String;
-      const aLocalPath: TFileName;
-      const aDepth: Integer = UNLIMITED_CLONE_DEPTH): Boolean;
 
     function HttpsCredentialCallback(
       out cred: Pgit_credential;
@@ -65,6 +56,22 @@ type
     function SidebandProgressCallback(str: PAnsiChar;
       len: Size_t;
       payload: Pointer): Integer; cdecl;
+
+  public
+    constructor Create;
+
+    destructor Destroy; override;
+
+    function Init(const aRepoPath: TFileName): Boolean;
+
+    function Clone(const aUrl: String;
+      const aLocalPath: TFileName;
+      const aBranchName: String = '';
+      const aDepth: Integer = UNLIMITED_CLONE_DEPTH): Boolean;
+
+    function IsGitRepo(const aPath: TFileName): Boolean;
+
+    function ExistsRemoteBranch(const aRepoPath, aRemoteName, aBranchName: String): Boolean;
 
     property LastErrorText: String read FLastErrorText;
 
@@ -126,6 +133,63 @@ begin
   DoLog(aText, []);
 end;
 
+type
+  PRemoteHeadArray = ^TRemoteHeadArray;
+  TRemoteHeadArray = array[0..(High(Integer) div SizeOf(Pgit_remote_head))-1] of Pgit_remote_head;
+
+function TLibGit2.ExistsRemoteBranch(const aRepoPath, aRemoteName, aBranchName: string): Boolean;
+var
+  Repo: Pgit_repository;
+  Remote: Pgit_remote;
+  Count, I: Size_t;
+  RefName: AnsiString;
+  Callbacks: git_remote_callbacks;
+  RefsPtr: ^PPgit_remote_head;
+begin
+  Result := False;
+  if git_repository_open(@Repo, PAnsiChar(AnsiString(aRepoPath))) <> 0 then
+  begin
+    SetLastErrorFromGit;
+    Exit;
+  end;
+
+  if git_remote_lookup(@Remote, Repo, PAnsiChar(AnsiString(aRemoteName))) <> 0 then
+  begin
+    SetLastErrorFromGit;
+    git_repository_free(Repo);
+    Exit;
+  end;
+
+  git_remote_init_callbacks(@Callbacks, GIT_REMOTE_CALLBACKS_VERSION);
+  Callbacks.certificate_check := @Static_CertificateCheckCallback;
+  Callbacks.credentials := @Static_CredentialsCallback;
+  Callbacks.payload := Self;
+
+  if git_remote_connect(Remote, GIT_DIRECTION_FETCH, @Callbacks, nil, nil) = 0 then
+  begin
+    if git_remote_ls(@RefsPtr, @Count, Remote) = 0 then
+    begin
+      for I := 0 to Count - 1 do
+      begin
+        if RefsPtr = nil then
+          Break;
+        RefName := AnsiString(PRemoteHeadArray(RefsPtr)^[I]^.name_);
+        if RefName = 'refs/heads/' + AnsiString(aBranchName) then
+        begin
+          Result := True;
+          Break;
+        end;
+      end;
+    end else
+      SetLastErrorFromGit;
+    git_remote_disconnect(Remote);
+  end else
+    SetLastErrorFromGit;
+
+  git_remote_free(Remote);
+  git_repository_free(Repo);
+end;
+
 procedure TLibGit2.DoLog(const aText: String; const aArgs: array of const);
 begin
   if not Assigned(FOnLog) then
@@ -147,7 +211,18 @@ var
 begin
   Result := git_repository_init(@Repo, PAnsiChar(AnsiString(aRepoPath)), 0) = 0;
   if not Result then
-    SetLastErrorFromGit;
+    SetLastErrorFromGit
+  else
+    git_repository_free(Repo);
+end;
+
+function TLibGit2.IsGitRepo(const aPath: TFileName): Boolean;
+var
+  Repo: Pgit_repository;
+begin
+  Result := git_repository_open(@Repo, PAnsiChar(AnsiString(aPath))) = 0;
+  if Result then
+    git_repository_free(Repo);
 end;
 
 function TLibGit2.HttpsCredentialCallback(out cred: Pgit_credential;
@@ -199,9 +274,10 @@ end;
 
 function TLibGit2.Clone(const aUrl: String;
   const aLocalPath: TFileName;
+  const aBranchName: String;
   const aDepth: Integer): Boolean;
 var
-  Repo: PPgit_repository;
+  Repo: Pgit_repository;
   Options: git_clone_options;
 begin
   Result := (git_clone_options_init(@Options, GIT_CLONE_OPTIONS_VERSION) = 0);
@@ -223,12 +299,16 @@ begin
   if aDepth <> UNLIMITED_CLONE_DEPTH then
     options.fetch_opts.depth := aDepth;
 
+  if aBranchName <> '' then
+    options.checkout_branch := PAnsiChar(AnsiString(aBranchName));
+
   Result := git_clone(@repo, PAnsiChar(AnsiString(aUrl)), PAnsiChar(AnsiString(aLocalPath)), @options) = 0;
   if not Result then
   begin
     SetLastErrorFromGit;
     Exit;
-  end;
+  end else
+    git_repository_free(Repo);
 end;
 
 end.
